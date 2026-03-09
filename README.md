@@ -15,7 +15,7 @@ This module:
 ## Requirements
 
 | Provider | Version |
-|----------|---------|
+| -------- | ------- |
 | [bpg/proxmox](https://registry.terraform.io/providers/bpg/proxmox) | ~> 0.98 |
 | [e-breuninger/netbox](https://registry.terraform.io/providers/e-breuninger/netbox) | ~> 5.1 |
 
@@ -266,6 +266,7 @@ module "vm" {
 ```
 
 Key points:
+
 - `defaults` carries all cluster-level settings in a single assignment
 - `clone_vm_ids` maps OS identifiers to template IDs — the module automatically
   picks the right template based on `vm_os`
@@ -323,6 +324,7 @@ module "appserver" {
 ```
 
 Key points:
+
 - `defaults` provides cluster-level values; per-module overrides (like
   `initialization_ipv4_gateway` or `disks.datastore_id`) take precedence
 - `node_name` uses `format()` and modulo arithmetic for round-robin placement
@@ -435,6 +437,7 @@ field in `defaults` has a corresponding module variable. Resolution order:
 3. **`defaults.<field>`** — fallback from the defaults object
 
 Special behaviors:
+
 - `clone_vm_id`: if not set explicitly, looked up from `defaults.clone_vm_ids`
   using the effective `vm_os` as key. This means changing just `vm_os` on a VM
   automatically selects the matching template.
@@ -447,7 +450,7 @@ Special behaviors:
 ### `defaults` fields
 
 | Field | Type | Description |
-|-------|------|-------------|
+| ------ | ---- | ----------- |
 | `cluster_name` | `string` | Proxmox cluster name (for Netbox registration) |
 | `node_name` | `string` | Default Proxmox node for VM placement |
 | `vm_os` | `string` | Default OS identifier (e.g. `debian13`) |
@@ -464,7 +467,7 @@ Special behaviors:
 ## Inputs
 
 | Name | Type | Default | Required | Description |
-|------|------|---------|----------|-------------|
+| ---- | ---- | ------- | -------- | ----------- |
 | `defaults` | `object(...)` | `{}` | no | Default values (see above) |
 | `vm_name` | `string` | — | **yes** | VM name (FQDN) |
 | `vm_id` | `number` | — | **yes** | Proxmox VM ID |
@@ -489,7 +492,7 @@ Special behaviors:
 ### `network_interfaces` object
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
+| ------ | ---- | ------- | ----------- |
 | `bridge` | `string` | — | Bridge name (e.g. `vmbr0`) |
 | `model` | `string` | `"virtio"` | NIC model |
 | `firewall` | `bool` | `false` | Enable Proxmox firewall |
@@ -500,7 +503,7 @@ Special behaviors:
 ### `disks` object
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
+| ------ | ---- | ------- | ----------- |
 | `size` | `number` | — | Disk size in GB |
 | `datastore_id` | `string` | `null` | Datastore (falls back to `initialization_datastore_id`) |
 | `interface` | `string` | `null` | Disk interface (auto-assigned as `scsi0`, `scsi1`, ...) |
@@ -510,7 +513,7 @@ Special behaviors:
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | `vm` | The `proxmox_virtual_environment_vm` resource |
 | `netbox_vm` | The `netbox_virtual_machine` resource (or `null` if Netbox disabled) |
 | `ifaces` | Map of network interfaces with runtime data (MAC, IPs) |
@@ -533,3 +536,7 @@ Always run `tofu plan` after migration to verify zero changes.
 
 The module ignores changes to `initialization[0].user_data_file_id` and
 `clone[0].node_name` to prevent unnecessary updates after initial provisioning.
+
+<!-- markdownlint-configure-file {
+  "MD013": { "tables": false, "line_length": 100 },
+} -->
