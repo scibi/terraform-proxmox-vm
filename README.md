@@ -77,6 +77,129 @@ net_nameservers = "10.0.0.1"
 The resulting template ID can then be referenced in this module's
 `clone_vm_ids` map or `clone_vm_id` parameter.
 
+## Supporting resources
+
+Before calling the module you need two things: a **template ID map** (so the
+module knows which template to clone) and a **cloud-init user data file** (so
+Proxmox can inject users, SSH keys, and boot-time commands into the new VM).
+Both are typically defined in a per-cluster helper file.
+
+### Discovering templates automatically
+
+Instead of hardcoding template IDs, query Proxmox for VMs tagged `template`
+and build the map dynamically. The example below extracts the latest Debian
+template per major version and produces a map like
+`{ "12" = { "node1" = 9000 }, "13" = { "node1" = 9001 } }`:
+
+```hcl
+data "proxmox_virtual_environment_vms" "templates" {
+  tags = ["template"]
+}
+
+locals {
+  debian_templates = [
+    for vm in data.proxmox_virtual_environment_vms.templates.vms :
+    vm if startswith(vm["name"], "debian-") && endswith(vm["name"], "-amd64")
+  ]
+
+  debian_majors = distinct([
+    for vm in local.debian_templates :
+    split(".", split("-", vm["name"])[1])[0]
+  ])
+
+  latest_debian_name_by_major = {
+    for major in local.debian_majors :
+    major => sort([
+      for vm in local.debian_templates : vm["name"]
+      if split(".", split("-", vm["name"])[1])[0] == major
+    ])[length([
+      for vm in local.debian_templates : vm
+      if split(".", split("-", vm["name"])[1])[0] == major
+    ]) - 1]
+  }
+
+  # major version → { node_name = template_vm_id }
+  template_ids_by_major = {
+    for major, latest_name in local.latest_debian_name_by_major :
+    major => {
+      for vm in data.proxmox_virtual_environment_vms.templates.vms :
+      vm["node_name"] => vm["vm_id"] if vm["name"] == latest_name
+    }
+  }
+}
+```
+
+This lets you build `clone_vm_ids` for the `defaults` object without ever
+hardcoding a template ID:
+
+```hcl
+locals {
+  cluster_defaults = {
+    # ...
+    clone_vm_ids = {
+      for major, nodes in local.template_ids_by_major :
+        "debian${major}" => nodes["pve1"]
+    }
+  }
+}
+```
+
+When a new Debian point release is built with Packer (e.g.
+`debian-13.4.0-amd64` replacing `debian-13.3.0-amd64`), the `sort()` logic
+automatically picks the latest name, so no config changes are needed — just
+run `tofu apply`.
+
+### Cloud-init user data file
+
+The module expects a `proxmox_virtual_environment_file` resource containing a
+`#cloud-config` snippet. This snippet configures users, SSH keys, and
+boot-time commands (e.g. LVM partition growing). Create it as a Proxmox
+snippet and pass its ID via `defaults.initialization_user_data_file_id`:
+
+```hcl
+resource "proxmox_virtual_environment_file" "cloud_init" {
+  content_type = "snippets"
+  datastore_id = "local"
+  node_name    = "pve1"
+
+  source_raw {
+    file_name = "cloud-init-userdata.yaml"
+    data      = <<-EOF
+      #cloud-config
+      users:
+        - name: root
+          ssh_authorized_keys:
+            - ssh-ed25519 AAAA... admin@example.com
+        - name: deploy
+          groups: [users]
+          sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+          shell: /bin/bash
+          lock_passwd: false
+          ssh_authorized_keys:
+            - ssh-ed25519 AAAA... admin@example.com
+      bootcmd:
+        - >-
+          growpart /dev/sda 2 &&
+          pvresize /dev/sda2 &&
+          lvextend -l +100%FREE vg/root &&
+          resize2fs /dev/mapper/vg-root
+          || true
+    EOF
+  }
+}
+
+locals {
+  cluster_defaults = {
+    # ...
+    initialization_user_data_file_id = proxmox_virtual_environment_file.cloud_init.id
+  }
+}
+```
+
+In multi-node clusters the file may need to be uploaded to each node (using
+`count` or `for_each` over node names); in that case pass the appropriate
+element's ID.
+
 ## Usage
 
 ### Basic — single cluster with `for_each`
