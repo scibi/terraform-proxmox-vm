@@ -38,21 +38,7 @@ data "netbox_tag" "terraform" {
 resource "proxmox_virtual_environment_vm" "vm" {
   name        = var.vm_name
   description = "Managed by Terraform"
-  tags        = ["terraform", local.vm_os]
-
-  connection {
-    type = "ssh"
-    user = "root"
-    host = self.name
-  }
-
-  provisioner "remote-exec" {
-    inline = concat([
-      "echo '${split("/", self.initialization[0].ip_config[0].ipv4[0].address)[0]} ${self.name} ${split(".", self.name)[0]}' >> /etc/hosts",
-      "sed -i '/^127\\.0\\.1\\.1\\s/d' /etc/hosts",
-      "hostnamectl set-hostname ${split(".", self.name)[0]}",
-    ], var.provisioner_extra_commands)
-  }
+  tags        = compact(["terraform", local.vm_os])
 
   node_name = local.node_name
   vm_id     = var.vm_id
@@ -66,9 +52,12 @@ resource "proxmox_virtual_environment_vm" "vm" {
     type  = var.cpu_type
   }
 
-  clone {
-    vm_id     = local.clone_vm_id
-    node_name = local.clone_node_name
+  dynamic "clone" {
+    for_each = var.skip_clone ? [] : [1]
+    content {
+      vm_id     = local.clone_vm_id
+      node_name = local.clone_node_name
+    }
   }
 
   agent {
@@ -94,28 +83,45 @@ resource "proxmox_virtual_environment_vm" "vm" {
   dynamic "disk" {
     for_each = var.disks
     content {
-      datastore_id = coalesce(disk.value.datastore_id, local.initialization_datastore_id)
-      interface    = coalesce(disk.value.interface, "scsi${disk.key}")
-      size         = disk.value.size
-      file_format  = disk.value.file_format
-      iothread     = disk.value.iothread
+      datastore_id      = disk.value.path_in_datastore != null ? "" : coalesce(disk.value.datastore_id, local.initialization_datastore_id)
+      interface         = coalesce(disk.value.interface, "scsi${disk.key}")
+      size              = disk.value.size
+      file_format       = disk.value.file_format
+      iothread          = disk.value.iothread
+      serial            = disk.value.serial
+      path_in_datastore = disk.value.path_in_datastore
+      backup            = disk.value.backup
     }
   }
 
-  initialization {
-    datastore_id = local.initialization_datastore_id
-    dns {
-      domain  = local.initialization_dns_domain
-      servers = local.initialization_dns_servers
-    }
-    ip_config {
-      ipv4 {
-        address = var.network_interfaces[0].ipv4_address
-        gateway = local.initialization_ipv4_gateway
+  dynamic "initialization" {
+    for_each = var.skip_clone ? [] : [1]
+    content {
+      datastore_id = local.initialization_datastore_id
+      dns {
+        domain  = local.initialization_dns_domain
+        servers = local.initialization_dns_servers
       }
+      ip_config {
+        ipv4 {
+          address = var.network_interfaces[0].ipv4_address
+          gateway = local.initialization_ipv4_gateway
+        }
+      }
+      user_data_file_id = local.initialization_user_data_file_id
     }
-    user_data_file_id = local.initialization_user_data_file_id
   }
+
+  dynamic "cdrom" {
+    for_each = var.cdrom != null ? [var.cdrom] : []
+    content {
+      file_id   = cdrom.value.file_id
+      interface = cdrom.value.interface
+    }
+  }
+
+  boot_order    = var.boot_order
+  scsi_hardware = var.scsi_hardware
 
   vga {
     memory = 4
@@ -130,8 +136,27 @@ resource "proxmox_virtual_environment_vm" "vm" {
   lifecycle {
     ignore_changes = [
       initialization[0].user_data_file_id,
-      clone[0].node_name,
     ]
+  }
+}
+
+resource "terraform_data" "provisioner" {
+  count = var.skip_clone ? 0 : 1
+
+  triggers_replace = [proxmox_virtual_environment_vm.vm.id]
+
+  connection {
+    type = "ssh"
+    user = "root"
+    host = proxmox_virtual_environment_vm.vm.name
+  }
+
+  provisioner "remote-exec" {
+    inline = concat([
+      "echo '${split("/", proxmox_virtual_environment_vm.vm.initialization[0].ip_config[0].ipv4[0].address)[0]} ${proxmox_virtual_environment_vm.vm.name} ${split(".", proxmox_virtual_environment_vm.vm.name)[0]}' >> /etc/hosts",
+      "sed -i '/^127\\.0\\.1\\.1\\s/d' /etc/hosts",
+      "hostnamectl set-hostname ${split(".", proxmox_virtual_environment_vm.vm.name)[0]}",
+    ], var.provisioner_extra_commands)
   }
 }
 
@@ -143,7 +168,7 @@ resource "netbox_virtual_machine" "vm" {
 
   name         = proxmox_virtual_environment_vm.vm.name
   memory_mb    = proxmox_virtual_environment_vm.vm.memory[0].dedicated
-  disk_size_mb = sum([for d in var.disks : d.size]) * 1024
+  disk_size_mb = sum([for d in var.disks : coalesce(d.size, 0)]) * 1024
 
   vcpus = var.cpu_cores
   local_context_data = jsonencode({

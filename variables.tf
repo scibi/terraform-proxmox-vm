@@ -89,13 +89,16 @@ variable "network_interfaces" {
 
 variable "disks" {
   type = list(object({
-    datastore_id = optional(string)
-    interface    = optional(string)
-    size         = number
-    file_format  = optional(string, "raw")
-    iothread     = optional(bool, true)
+    datastore_id      = optional(string)
+    interface         = optional(string)
+    size              = optional(number)
+    file_format       = optional(string, "raw")
+    iothread          = optional(bool, true)
+    serial            = optional(string)
+    path_in_datastore = optional(string)
+    backup            = optional(bool)
   }))
-  description = "Disks"
+  description = "Disks. For passthrough: set path_in_datastore to host device path, file_format to raw."
 }
 
 variable "initialization_datastore_id" {
@@ -138,4 +141,31 @@ variable "provisioner_extra_commands" {
   type        = list(string)
   description = "Additional shell commands to run via remote-exec after VM creation"
   default     = []
+}
+
+variable "skip_clone" {
+  type        = bool
+  description = "Skip clone, cloud-init and provisioning. Use for VMs created from ISO."
+  default     = false
+}
+
+variable "cdrom" {
+  type = object({
+    file_id   = string
+    interface = optional(string)
+  })
+  description = "CD-ROM/ISO configuration. Set file_id to 'none' after install."
+  default     = null
+}
+
+variable "boot_order" {
+  type        = list(string)
+  description = "Boot device order, e.g. [\"scsi0\", \"ide2\", \"net0\"]"
+  default     = null
+}
+
+variable "scsi_hardware" {
+  type        = string
+  description = "SCSI hardware type (e.g. virtio-scsi-single, virtio-scsi-pci)"
+  default     = null
 }

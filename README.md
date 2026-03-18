@@ -1,23 +1,27 @@
 # proxmox-vm
 
-OpenTofu module for creating Proxmox VE virtual machines with cloud-init
-initialization and optional Netbox inventory registration.
+OpenTofu module for creating Proxmox VE virtual machines with optional
+cloud-init initialization and Netbox inventory registration.
 
 ## Overview
 
 This module:
 
-- Clones a VM from a Proxmox template with cloud-init configuration
-- Configures networking, disks, CPU, and memory
+- Creates VMs by cloning a Proxmox template with cloud-init, **or** from
+  scratch for ISO-installed systems (set `skip_clone = true`)
+- Configures networking, disks (including host disk passthrough), CPU, and
+  memory
+- Supports disk serial numbers, CD-ROM/ISO attachment, custom boot order, and
+  SCSI hardware selection
 - Optionally registers the VM in Netbox (interfaces, IP addresses, disks)
 - Supports a `defaults` parameter to eliminate repetition across many VMs
 
 ## Requirements
 
-| Provider | Version |
-| -------- | ------- |
+| Provider                                                            | Version |
+| ------------------------------------------------------------------- | ------- |
 | [bpg/proxmox](https://registry.terraform.io/providers/bpg/proxmox) | ~> 0.98 |
-| [e-breuninger/netbox](https://registry.terraform.io/providers/e-breuninger/netbox) | ~> 5.1 |
+| [e-breuninger/netbox](https://registry.terraform.io/providers/e-breuninger/netbox) | ~> 5.1  |
 
 ## Creating VM templates with Packer
 
@@ -427,6 +431,99 @@ module "worker" {
 }
 ```
 
+### ISO-installed VMs (no clone)
+
+For VMs that cannot be cloned from a template (e.g. TrueNAS, pfSense, or any
+OS installed manually from an ISO), set `skip_clone = true`. This disables the
+`clone` block, cloud-init `initialization`, and the post-creation provisioner.
+
+```hcl
+module "nas" {
+  source    = "./modules/proxmox-vm"
+  providers = { proxmox = proxmox.pve1 }
+
+  defaults   = local.cluster_defaults
+  vm_name    = "nas.example.com"
+  vm_id      = 200
+  vm_os      = "truenas"
+  skip_clone = true
+
+  cpu_cores     = 2
+  memory_size   = 16384
+  scsi_hardware = "virtio-scsi-single"
+  boot_order    = ["scsi0", "ide2", "net0"]
+
+  cdrom = { file_id = "local:iso/TrueNAS-SCALE-24.10.2.iso" }
+
+  network_interfaces = [{
+    bridge       = "vmbr0"
+    vlan_id      = 100
+    ipv4_address = "10.0.100.10/24"
+  }]
+
+  disks = [
+    {
+      interface = "scsi0"
+      size      = 32
+      serial    = "NAS_BOOT"
+    },
+    {
+      interface = "scsi1"
+      size      = 100
+      serial    = "NAS_DATA"
+      backup    = false
+    },
+    {
+      interface         = "sata0"
+      path_in_datastore = "/dev/disk/by-id/ata-WDC_WD8005FFBX-68CAKN0_WD-XXXXXXXX"
+      file_format       = "raw"
+      backup            = false
+    },
+    {
+      interface         = "sata1"
+      path_in_datastore = "/dev/disk/by-id/ata-WDC_WD8005FFBX-68CAKN0_WD-YYYYYYYY"
+      file_format       = "raw"
+      backup            = false
+    },
+  ]
+}
+```
+
+Workflow:
+
+1. `tofu apply` — creates the VM with the ISO attached and boots from it
+2. Open the Proxmox console and install the OS manually
+3. After installation, change `cdrom` to `{ file_id = "none" }` and run
+   `tofu apply` again to detach the ISO
+
+### Disk passthrough
+
+Physical host disks can be passed through to a VM by setting
+`path_in_datastore` to the block device path on the Proxmox host. The module
+automatically sets `datastore_id = ""` when `path_in_datastore` is provided.
+
+```hcl
+disks = [
+  {
+    interface         = "sata0"
+    path_in_datastore = "/dev/disk/by-id/ata-WDC_WD8005FFBX-68CAKN0_WD-XXXXXXXX"
+    file_format       = "raw"
+    backup            = false
+  },
+]
+```
+
+Key points:
+
+- Always use `/dev/disk/by-id/` paths for stable device identification
+- Set `file_format = "raw"` (required for raw block devices)
+- Set `backup = false` — physical disks should not be included in VM backups
+- Use `serial` on virtual disks to give them unique identifiers visible inside
+  the guest OS (up to 20 bytes). This is important for systems like TrueNAS
+  that use disk serial numbers for pool identification.
+- Passthrough disks do not need `size` — the provider reads it from the
+  physical device
+
 ## The `defaults` parameter
 
 The `defaults` object carries cluster-level or project-level settings. Every
@@ -449,75 +546,82 @@ Special behaviors:
 
 ### `defaults` fields
 
-| Field | Type | Description |
-| ------ | ---- | ----------- |
-| `cluster_name` | `string` | Proxmox cluster name (for Netbox registration) |
-| `node_name` | `string` | Default Proxmox node for VM placement |
-| `vm_os` | `string` | Default OS identifier (e.g. `debian13`) |
-| `clone_vm_id` | `number` | Default template VM ID |
-| `clone_vm_ids` | `map(number)` | Map of `vm_os` → template VM ID for auto-lookup |
-| `clone_node_name` | `string` | Node where templates reside |
-| `initialization_datastore_id` | `string` | Datastore for cloud-init and disk fallback |
-| `initialization_dns_domain` | `string` | DNS domain for cloud-init |
-| `initialization_dns_servers` | `list(string)` | DNS servers for cloud-init |
-| `initialization_ipv4_gateway` | `string` | Default IPv4 gateway |
-| `initialization_user_data_file_id` | `string` | Cloud-init user data file ID |
-| `enable_netbox` | `bool` | Whether to create Netbox resources |
+| Field                                | Type           | Description                                      |
+| ------------------------------------ | -------------- | ------------------------------------------------ |
+| `cluster_name`                       | `string`       | Proxmox cluster name (for Netbox registration)   |
+| `node_name`                          | `string`       | Default Proxmox node for VM placement            |
+| `vm_os`                              | `string`       | Default OS identifier (e.g. `debian13`)          |
+| `clone_vm_id`                        | `number`       | Default template VM ID                           |
+| `clone_vm_ids`                       | `map(number)`  | Map of `vm_os` → template VM ID for auto-lookup  |
+| `clone_node_name`                    | `string`       | Node where templates reside                      |
+| `initialization_datastore_id`        | `string`       | Datastore for cloud-init and disk fallback        |
+| `initialization_dns_domain`          | `string`       | DNS domain for cloud-init                        |
+| `initialization_dns_servers`         | `list(string)` | DNS servers for cloud-init                       |
+| `initialization_ipv4_gateway`        | `string`       | Default IPv4 gateway                             |
+| `initialization_user_data_file_id`   | `string`       | Cloud-init user data file ID                     |
+| `enable_netbox`                      | `bool`         | Whether to create Netbox resources               |
 
 ## Inputs
 
-| Name | Type | Default | Required | Description |
-| ---- | ---- | ------- | -------- | ----------- |
-| `defaults` | `object(...)` | `{}` | no | Default values (see above) |
-| `vm_name` | `string` | — | **yes** | VM name (FQDN) |
-| `vm_id` | `number` | — | **yes** | Proxmox VM ID |
-| `network_interfaces` | `list(object)` | — | **yes** | Network interfaces (see below) |
-| `disks` | `list(object)` | — | **yes** | Disk definitions (see below) |
-| `cluster_name` | `string` | `null` | no | Proxmox cluster name |
-| `node_name` | `string` | `null` | no | Proxmox node name |
-| `vm_os` | `string` | `null` | no | OS identifier for tagging and template lookup |
-| `clone_vm_id` | `number` | `null` | no | Template VM ID to clone |
-| `clone_node_name` | `string` | `null` | no | Node where template resides |
-| `memory_size` | `number` | `1024` | no | RAM in MB |
-| `cpu_cores` | `number` | `1` | no | Number of CPU cores |
-| `cpu_type` | `string` | `"host"` | no | CPU type |
-| `initialization_datastore_id` | `string` | `null` | no | Datastore for cloud-init drive |
-| `initialization_dns_domain` | `string` | `null` | no | DNS domain |
-| `initialization_dns_servers` | `list(string)` | `null` | no | DNS servers |
-| `initialization_ipv4_gateway` | `string` | `null` | no | IPv4 gateway |
-| `initialization_user_data_file_id` | `string` | `null` | no | Cloud-init user data file ID |
-| `enable_netbox` | `bool` | `null` | no | Create Netbox resources (fallback: `true`) |
-| `provisioner_extra_commands` | `list(string)` | `[]` | no | Additional shell commands run via remote-exec after creation |
+| Name                               | Type                             | Default  | Required | Description                                                   |
+| ---------------------------------- | -------------------------------- | -------- | -------- | ------------------------------------------------------------- |
+| `defaults`                         | `object(...)`                    | `{}`     | no       | Default values (see above)                                    |
+| `vm_name`                          | `string`                         | —        | **yes**  | VM name (FQDN)                                                |
+| `vm_id`                            | `number`                         | —        | **yes**  | Proxmox VM ID                                                 |
+| `network_interfaces`               | `list(object)`                   | —        | **yes**  | Network interfaces (see below)                                |
+| `disks`                            | `list(object)`                   | —        | **yes**  | Disk definitions (see below)                                  |
+| `cluster_name`                     | `string`                         | `null`   | no       | Proxmox cluster name                                          |
+| `node_name`                        | `string`                         | `null`   | no       | Proxmox node name                                             |
+| `vm_os`                            | `string`                         | `null`   | no       | OS identifier for tagging and template lookup                 |
+| `clone_vm_id`                      | `number`                         | `null`   | no       | Template VM ID to clone                                       |
+| `clone_node_name`                  | `string`                         | `null`   | no       | Node where template resides                                   |
+| `memory_size`                      | `number`                         | `1024`   | no       | RAM in MB                                                     |
+| `cpu_cores`                        | `number`                         | `1`      | no       | Number of CPU cores                                           |
+| `cpu_type`                         | `string`                         | `"host"` | no       | CPU type                                                      |
+| `initialization_datastore_id`      | `string`                         | `null`   | no       | Datastore for cloud-init drive                                |
+| `initialization_dns_domain`        | `string`                         | `null`   | no       | DNS domain                                                    |
+| `initialization_dns_servers`       | `list(string)`                   | `null`   | no       | DNS servers                                                   |
+| `initialization_ipv4_gateway`      | `string`                         | `null`   | no       | IPv4 gateway                                                  |
+| `initialization_user_data_file_id` | `string`                         | `null`   | no       | Cloud-init user data file ID                                  |
+| `enable_netbox`                    | `bool`                           | `null`   | no       | Create Netbox resources (fallback: `true`)                    |
+| `provisioner_extra_commands`       | `list(string)`                   | `[]`     | no       | Additional shell commands run via remote-exec after creation  |
+| `skip_clone`                       | `bool`                           | `false`  | no       | Skip clone, cloud-init and provisioning (for ISO-installed VMs) |
+| `cdrom`                            | `object({file_id, interface?})`  | `null`   | no       | CD-ROM/ISO configuration                                     |
+| `boot_order`                       | `list(string)`                   | `null`   | no       | Boot device order (e.g. `["scsi0", "ide2", "net0"]`)         |
+| `scsi_hardware`                    | `string`                         | `null`   | no       | SCSI controller type (e.g. `virtio-scsi-single`)             |
 
 ### `network_interfaces` object
 
-| Field | Type | Default | Description |
-| ------ | ---- | ------- | ----------- |
-| `bridge` | `string` | — | Bridge name (e.g. `vmbr0`) |
-| `model` | `string` | `"virtio"` | NIC model |
-| `firewall` | `bool` | `false` | Enable Proxmox firewall |
-| `vlan_id` | `number` | `null` | VLAN tag |
-| `ipv4_address` | `string` | `null` | IPv4 address with CIDR (e.g. `10.0.0.1/24`) |
-| `ipv6_address` | `string` | `null` | IPv6 address with prefix |
+| Field          | Type     | Default    | Description                                   |
+| -------------- | -------- | ---------- | --------------------------------------------- |
+| `bridge`       | `string` | —          | Bridge name (e.g. `vmbr0`)                    |
+| `model`        | `string` | `"virtio"` | NIC model                                     |
+| `firewall`     | `bool`   | `false`    | Enable Proxmox firewall                       |
+| `vlan_id`      | `number` | `null`     | VLAN tag                                      |
+| `ipv4_address` | `string` | `null`     | IPv4 address with CIDR (e.g. `10.0.0.1/24`)  |
+| `ipv6_address` | `string` | `null`     | IPv6 address with prefix                      |
 
 ### `disks` object
 
-| Field | Type | Default | Description |
-| ------ | ---- | ------- | ----------- |
-| `size` | `number` | — | Disk size in GB |
-| `datastore_id` | `string` | `null` | Datastore (falls back to `initialization_datastore_id`) |
-| `interface` | `string` | `null` | Disk interface (auto-assigned as `scsi0`, `scsi1`, ...) |
-| `file_format` | `string` | `"raw"` | Disk format |
-| `iothread` | `bool` | `true` | Enable IO thread |
+| Field               | Type     | Default | Description                                                                        |
+| ------------------- | -------- | ------- | ---------------------------------------------------------------------------------- |
+| `size`              | `number` | `null`  | Disk size in GB (optional for passthrough disks)                                   |
+| `datastore_id`      | `string` | `null`  | Datastore (falls back to `initialization_datastore_id`; auto `""` for passthrough) |
+| `interface`         | `string` | `null`  | Disk interface (auto-assigned as `scsi0`, `scsi1`, ...)                            |
+| `file_format`       | `string` | `"raw"` | Disk format                                                                        |
+| `iothread`          | `bool`   | `true`  | Enable IO thread                                                                   |
+| `serial`            | `string` | `null`  | Disk serial number visible to guest OS (up to 20 bytes)                            |
+| `path_in_datastore` | `string` | `null`  | Host device path for passthrough (e.g. `/dev/disk/by-id/...`)                      |
+| `backup`            | `bool`   | `null`  | Include in backups (set `false` for passthrough disks)                             |
 
 ## Outputs
 
-| Name | Description |
-| ---- | ----------- |
-| `vm` | The `proxmox_virtual_environment_vm` resource |
-| `netbox_vm` | The `netbox_virtual_machine` resource (or `null` if Netbox disabled) |
-| `ifaces` | Map of network interfaces with runtime data (MAC, IPs) |
-| `disks` | Map of disks with runtime data |
+| Name         | Description                                                      |
+| ------------ | ---------------------------------------------------------------- |
+| `vm`         | The `proxmox_virtual_environment_vm` resource                    |
+| `netbox_vm`  | The `netbox_virtual_machine` resource (or `null` if Netbox disabled) |
+| `ifaces`     | Map of network interfaces with runtime data (MAC, IPs)           |
+| `disks`      | Map of disks with runtime data                                   |
 
 ## Notes
 
@@ -534,8 +638,12 @@ Always run `tofu plan` after migration to verify zero changes.
 
 ### Lifecycle
 
-The module ignores changes to `initialization[0].user_data_file_id` and
-`clone[0].node_name` to prevent unnecessary updates after initial provisioning.
+The module ignores changes to `initialization[0].user_data_file_id` to prevent
+unnecessary updates after initial provisioning.
+
+The post-creation provisioner (hostname configuration via `remote-exec`) runs
+in a separate `terraform_data` resource. It is automatically skipped when
+`skip_clone = true`.
 
 <!-- markdownlint-configure-file {
   "MD013": { "tables": false, "line_length": 100 },
