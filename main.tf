@@ -8,6 +8,14 @@ terraform {
       source  = "e-breuninger/netbox"
       version = "~> 5.1.0"
     }
+    opnsense = {
+      source  = "browningluke/opnsense"
+      version = "~> 0.16.1"
+    }
+    dns = {
+      source  = "hashicorp/dns"
+      version = "~> 3.4.0"
+    }
   }
 }
 

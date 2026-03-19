@@ -14,6 +14,7 @@ This module:
 - Supports disk serial numbers, CD-ROM/ISO attachment, custom boot order, and
   SCSI hardware selection
 - Optionally registers the VM in Netbox (interfaces, IP addresses, disks)
+- Optionally creates forward DNS records (OPNSense Unbound or RFC2136)
 - Supports a `defaults` parameter to eliminate repetition across many VMs
 
 ## Requirements
@@ -22,6 +23,8 @@ This module:
 | ------------------------------------------------------------------- | ------- |
 | [bpg/proxmox](https://registry.terraform.io/providers/bpg/proxmox) | ~> 0.98 |
 | [e-breuninger/netbox](https://registry.terraform.io/providers/e-breuninger/netbox) | ~> 5.1  |
+| [browningluke/opnsense](https://registry.terraform.io/providers/browningluke/opnsense) | ~> 0.16 |
+| [hashicorp/dns](https://registry.terraform.io/providers/hashicorp/dns) | ~> 3.4  |
 
 ## Creating VM templates with Packer
 
@@ -535,6 +538,88 @@ Key points:
   ([#566](https://github.com/bpg/terraform-provider-proxmox/issues/566),
   [#1525 comment](https://github.com/bpg/terraform-provider-proxmox/issues/1525#issuecomment-2355891897)).
 
+## DNS integration
+
+The module can optionally create forward DNS records for the VM. Set
+`dns_provider` in `defaults` (or per-module) to enable. The hostname and IP
+are derived automatically from `vm_name` and `network_interfaces[0].ipv4_address`.
+
+Two backends are supported:
+
+| Backend    | Provider                  | Resource                              | Use case                                |
+| ---------- | ------------------------- | ------------------------------------- | --------------------------------------- |
+| `opnsense` | `browningluke/opnsense`   | `opnsense_unbound_host_override`      | Split DNS via OPNSense Unbound overrides |
+| `rfc2136`  | `hashicorp/dns`           | `dns_a_record_set`                    | RFC2136 dynamic updates (PowerDNS, Bind, Knot, etc.) |
+
+Both providers are declared in `required_providers` and installed during
+`tofu init`. Unused providers receive dummy configuration and never establish
+connections (same pattern as Netbox).
+
+> **Note on PowerDNS:** Use the `rfc2136` backend for PowerDNS. It uses the
+> standard RFC2136 dynamic update protocol via `hashicorp/dns`, which works
+> with PowerDNS (requires `dnsupdate=yes` in PowerDNS configuration), Bind,
+> Knot, and other authoritative DNS servers. A dedicated PowerDNS HTTP API
+> provider (`mmianl/powerdns` or `pan-net/powerdns`) was evaluated but both
+> connect to the server during provider initialization — making dummy
+> configurations impossible when the provider is unused. This is incompatible
+> with the "install only what you use" design of this module.
+
+### Enabling DNS in defaults
+
+```hcl
+locals {
+  cluster_defaults = {
+    # ...existing fields...
+    dns_provider = "opnsense"
+  }
+}
+```
+
+All VMs using these defaults will automatically get forward DNS records.
+To disable DNS for a specific VM, set `dns_provider = null` on that module call.
+
+### RFC2136 extra settings
+
+The `rfc2136` backend uses `dns_zone` (with trailing dot) and `dns_ttl`.
+These can be set in `defaults` or per-module:
+
+```hcl
+locals {
+  cluster_defaults = {
+    # ...
+    dns_provider = "rfc2136"
+    dns_zone     = "lab.home."
+    dns_ttl      = 300
+  }
+}
+```
+
+When `dns_zone` is not set, it is derived from `vm_name` (e.g.
+`vmetrics.sciborek.com` produces zone `sciborek.com.`).
+
+### Provider configuration (root module)
+
+Configure only the provider you actually use; the rest get dummy values:
+
+```hcl
+# OPNSense
+provider "opnsense" {
+  uri        = "https://opnsense.example.com"
+  api_key    = var.opnsense_api_key
+  api_secret = var.opnsense_api_secret
+}
+
+# RFC2136 (PowerDNS, Bind, Knot, etc.)
+provider "dns" {
+  update {
+    server        = "10.0.0.53"
+    key_name      = "terraform-key."
+    key_algorithm = "hmac-sha256"
+    key_secret    = var.dns_tsig_secret
+  }
+}
+```
+
 ## The `defaults` parameter
 
 The `defaults` object carries cluster-level or project-level settings. Every
@@ -571,6 +656,9 @@ Special behaviors:
 | `initialization_ipv4_gateway`        | `string`       | Default IPv4 gateway                             |
 | `initialization_user_data_file_id`   | `string`       | Cloud-init user data file ID                     |
 | `enable_netbox`                      | `bool`         | Whether to create Netbox resources               |
+| `dns_provider`                       | `string`       | DNS backend: `opnsense`, `rfc2136`               |
+| `dns_zone`                           | `string`       | DNS zone with trailing dot (RFC2136)             |
+| `dns_ttl`                            | `number`       | DNS record TTL in seconds (RFC2136)              |
 
 ## Inputs
 
@@ -601,6 +689,9 @@ Special behaviors:
 | `cdrom`                            | `object({file_id, interface?})`  | `null`   | no       | CD-ROM/ISO config (interface defaults to `ide2`)             |
 | `boot_order`                       | `list(string)`                   | `null`   | no       | Boot device order (e.g. `["scsi0", "ide2", "net0"]`)         |
 | `scsi_hardware`                    | `string`                         | `null`   | no       | SCSI controller type (e.g. `virtio-scsi-single`)             |
+| `dns_provider`                     | `string`                         | `null`   | no       | DNS backend: `opnsense`, `rfc2136`, or `null`                |
+| `dns_zone`                         | `string`                         | `null`   | no       | DNS zone with trailing dot (RFC2136)                         |
+| `dns_ttl`                          | `number`                         | `null`   | no       | DNS record TTL in seconds (default 3600)                     |
 
 ### `network_interfaces` object
 
@@ -634,6 +725,7 @@ Special behaviors:
 | `netbox_vm`  | The `netbox_virtual_machine` resource (or `null` if Netbox disabled) |
 | `ifaces`     | Map of network interfaces with runtime data (MAC, IPs)           |
 | `disks`      | Map of disks with runtime data                                   |
+| `dns_forward` | Forward DNS record resource (or `null` if DNS disabled)         |
 
 ## Known limitations
 

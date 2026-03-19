@@ -13,6 +13,9 @@ variable "defaults" {
     initialization_ipv4_gateway      = optional(string)
     initialization_user_data_file_id = optional(string)
     enable_netbox                    = optional(bool)
+    dns_provider                     = optional(string)
+    dns_zone                         = optional(string)
+    dns_ttl                          = optional(number)
   })
   default = {}
 }
@@ -175,3 +178,26 @@ variable "scsi_hardware" {
   description = "SCSI hardware type (e.g. virtio-scsi-single, virtio-scsi-pci)"
   default     = null
 }
+
+variable "dns_provider" {
+  type        = string
+  description = "DNS provider: 'opnsense', 'rfc2136', or null to disable. Use 'rfc2136' for PowerDNS, Bind, Knot, etc."
+  default     = null
+  validation {
+    condition     = var.dns_provider == null || contains(["opnsense", "rfc2136"], var.dns_provider)
+    error_message = "dns_provider must be 'opnsense', 'rfc2136', or null"
+  }
+}
+
+variable "dns_zone" {
+  type        = string
+  description = "DNS zone with trailing dot, e.g. 'sciborek.com.' (RFC2136). Derived from vm_name if null."
+  default     = null
+}
+
+variable "dns_ttl" {
+  type        = number
+  description = "DNS record TTL in seconds (RFC2136, default 3600)"
+  default     = null
+}
+
