@@ -36,12 +36,14 @@ data "netbox_tag" "terraform" {
 }
 
 resource "proxmox_virtual_environment_vm" "vm" {
-  name        = var.vm_name
-  description = "Managed by Terraform"
-  tags        = compact(["terraform", local.vm_os])
+  name            = var.vm_name
+  description     = "Managed by Terraform"
+  tags            = compact(["terraform", local.vm_os])
+  stop_on_destroy = true
 
   node_name = local.node_name
   vm_id     = var.vm_id
+  started   = var.started
 
   memory {
     dedicated = var.memory_size
@@ -87,7 +89,7 @@ resource "proxmox_virtual_environment_vm" "vm" {
       interface         = coalesce(disk.value.interface, "scsi${disk.key}")
       size              = disk.value.size
       file_format       = disk.value.file_format
-      iothread          = disk.value.iothread
+      iothread          = startswith(coalesce(disk.value.interface, "scsi${disk.key}"), "scsi") ? disk.value.iothread : false
       serial            = disk.value.serial
       path_in_datastore = disk.value.path_in_datastore
       backup            = disk.value.backup

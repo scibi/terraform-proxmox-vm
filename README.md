@@ -447,11 +447,12 @@ module "nas" {
   vm_id      = 200
   vm_os      = "truenas"
   skip_clone = true
+  started    = false
 
   cpu_cores     = 2
   memory_size   = 16384
   scsi_hardware = "virtio-scsi-single"
-  boot_order    = ["scsi0", "ide2", "net0"]
+  boot_order    = ["ide2", "scsi0", "net0"]
 
   cdrom = { file_id = "local:iso/TrueNAS-SCALE-24.10.2.iso" }
 
@@ -491,10 +492,14 @@ module "nas" {
 
 Workflow:
 
-1. `tofu apply` — creates the VM with the ISO attached and boots from it
-2. Open the Proxmox console and install the OS manually
-3. After installation, change `cdrom` to `{ file_id = "none" }` and run
-   `tofu apply` again to detach the ISO
+1. `tofu apply` — creates the VM in stopped state (`started = false` avoids
+   a 15-minute wait for the QEMU agent on an empty VM)
+2. Start the VM from the Proxmox console and install the OS manually
+3. After installation, change in the module call:
+   - `started = true`
+   - `cdrom = { file_id = "none" }`
+   - `boot_order = ["scsi0", "ide2", "net0"]`
+4. `tofu apply` — detaches the ISO and enables autostart
 
 ### Disk passthrough
 
@@ -521,8 +526,14 @@ Key points:
 - Use `serial` on virtual disks to give them unique identifiers visible inside
   the guest OS (up to 20 bytes). This is important for systems like TrueNAS
   that use disk serial numbers for pool identification.
-- Passthrough disks do not need `size` — the provider reads it from the
-  physical device
+- **Set `size` explicitly** for passthrough disks to prevent plan drift. Proxmox
+  reads the actual device size, but the `bpg/proxmox` provider defaults to
+  `size = 8` when not specified. After creation the state records the real size
+  (e.g. 7452 for 8 TB drives), causing a diff on every subsequent plan. Find the
+  real size with `qm config <vmid>` (shown in KiB) and convert:
+  `size_gib = size_kib / 1024 / 1024`. This is a known provider limitation
+  ([#566](https://github.com/bpg/terraform-provider-proxmox/issues/566),
+  [#1525 comment](https://github.com/bpg/terraform-provider-proxmox/issues/1525#issuecomment-2355891897)).
 
 ## The `defaults` parameter
 
@@ -586,7 +597,8 @@ Special behaviors:
 | `enable_netbox`                    | `bool`                           | `null`   | no       | Create Netbox resources (fallback: `true`)                    |
 | `provisioner_extra_commands`       | `list(string)`                   | `[]`     | no       | Additional shell commands run via remote-exec after creation  |
 | `skip_clone`                       | `bool`                           | `false`  | no       | Skip clone, cloud-init and provisioning (for ISO-installed VMs) |
-| `cdrom`                            | `object({file_id, interface?})`  | `null`   | no       | CD-ROM/ISO configuration                                     |
+| `started`                          | `bool`                           | `true`   | no       | Start VM after creation (set `false` for ISO installs)       |
+| `cdrom`                            | `object({file_id, interface?})`  | `null`   | no       | CD-ROM/ISO config (interface defaults to `ide2`)             |
 | `boot_order`                       | `list(string)`                   | `null`   | no       | Boot device order (e.g. `["scsi0", "ide2", "net0"]`)         |
 | `scsi_hardware`                    | `string`                         | `null`   | no       | SCSI controller type (e.g. `virtio-scsi-single`)             |
 
@@ -623,6 +635,45 @@ Special behaviors:
 | `ifaces`     | Map of network interfaces with runtime data (MAC, IPs)           |
 | `disks`      | Map of disks with runtime data                                   |
 
+## Known limitations
+
+### Disk passthrough requires `root@pam` password authentication
+
+Proxmox restricts passing arbitrary filesystem paths (used for physical disk
+passthrough via `path_in_datastore`) to the `root@pam` user authenticated with
+a **password**. API tokens — even those belonging to `root@pam` with full
+Administrator privileges — are rejected with:
+
+```
+Error: Only root can pass arbitrary filesystem paths.
+```
+
+This is a Proxmox-side limitation in `PVE/Storage.pm` (`check_volume_access`).
+A patch series introducing a `SuperUser` privilege (Proxmox bug #2582) was
+proposed in 2022 but has not been merged as of PVE 8.x.
+
+**Workaround:** Configure the `bpg/proxmox` provider with `username` and
+`password` instead of `api_token` when managing VMs with passthrough disks:
+
+```hcl
+provider "proxmox" {
+  endpoint = "https://pve.example.com:8006/"
+  username = "root@pam"
+  password = var.proxmox_password
+  ssh {
+    agent    = true
+    username = "root"
+  }
+}
+```
+
+The `bpg/proxmox` provider maintainers have confirmed this works and
+[declined](https://github.com/bpg/terraform-provider-proxmox/issues/1780)
+to implement an SSH-based workaround.
+
+If you do not use disk passthrough, API token authentication works fine for
+all other operations.
+
 ## Notes
 
 ### State migration when switching to `for_each`
@@ -644,6 +695,13 @@ unnecessary updates after initial provisioning.
 The post-creation provisioner (hostname configuration via `remote-exec`) runs
 in a separate `terraform_data` resource. It is automatically skipped when
 `skip_clone = true`.
+
+### CD-ROM interface
+
+The `cdrom` block defaults to `interface = "ide2"` (the traditional Proxmox
+CD-ROM interface). Note that the upstream `bpg/proxmox` provider defaults to
+`ide3` — this module overrides that default. Make sure `boot_order` references
+the correct interface (e.g. `["ide2", "scsi0", "net0"]` for ISO installation).
 
 <!-- markdownlint-configure-file {
   "MD013": { "tables": false, "line_length": 100 },

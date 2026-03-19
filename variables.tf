@@ -149,10 +149,16 @@ variable "skip_clone" {
   default     = false
 }
 
+variable "started" {
+  type        = bool
+  description = "Start the VM after creation. Set to false for ISO installs (avoids 15min agent timeout)."
+  default     = true
+}
+
 variable "cdrom" {
   type = object({
     file_id   = string
-    interface = optional(string)
+    interface = optional(string, "ide2")
   })
   description = "CD-ROM/ISO configuration. Set file_id to 'none' after install."
   default     = null
