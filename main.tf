@@ -26,7 +26,7 @@ locals {
   clone_vm_id                      = var.clone_vm_id != null ? var.clone_vm_id : try(var.defaults.clone_vm_ids[local.vm_os], var.defaults.clone_vm_id)
   clone_node_name                  = var.clone_node_name != null ? var.clone_node_name : try(var.defaults.clone_node_name, local.node_name)
   enable_netbox                    = var.enable_netbox != null ? var.enable_netbox : try(var.defaults.enable_netbox, true)
-  prevent_destroy                  = var.prevent_destroy != null ? var.prevent_destroy : try(var.defaults.prevent_destroy, false)
+  prevent_destroy                  = coalesce(var.prevent_destroy, var.defaults.prevent_destroy, false)
   initialization_datastore_id      = var.initialization_datastore_id != null ? var.initialization_datastore_id : var.defaults.initialization_datastore_id
   initialization_dns_domain        = var.initialization_dns_domain != null ? var.initialization_dns_domain : var.defaults.initialization_dns_domain
   initialization_dns_servers       = var.initialization_dns_servers != null ? var.initialization_dns_servers : var.defaults.initialization_dns_servers
