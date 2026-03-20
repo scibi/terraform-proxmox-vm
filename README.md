@@ -596,7 +596,7 @@ locals {
 ```
 
 When `dns_zone` is not set, it is derived from `vm_name` (e.g.
-`vmetrics.sciborek.com` produces zone `sciborek.com.`).
+`vmetrics.example.com` produces zone `example.com.`).
 
 ### Provider configuration (root module)
 

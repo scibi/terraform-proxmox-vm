@@ -198,7 +198,7 @@ variable "dns_provider" {
 
 variable "dns_zone" {
   type        = string
-  description = "DNS zone with trailing dot, e.g. 'sciborek.com.' (RFC2136). Derived from vm_name if null."
+  description = "DNS zone with trailing dot, e.g. 'example.com.' (RFC2136). Derived from vm_name if null."
   default     = null
 }
 
