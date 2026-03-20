@@ -13,6 +13,7 @@ variable "defaults" {
     initialization_ipv4_gateway      = optional(string)
     initialization_user_data_file_id = optional(string)
     enable_netbox                    = optional(bool)
+    prevent_destroy                  = optional(bool)
     dns_provider                     = optional(string)
     dns_zone                         = optional(string)
     dns_ttl                          = optional(number)
@@ -176,6 +177,12 @@ variable "boot_order" {
 variable "scsi_hardware" {
   type        = string
   description = "SCSI hardware type (e.g. virtio-scsi-single, virtio-scsi-pci)"
+  default     = null
+}
+
+variable "prevent_destroy" {
+  type        = bool
+  description = "Prevent accidental VM deletion. When true, any plan that would destroy the VM (including force-replacement) will be rejected."
   default     = null
 }
 

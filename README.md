@@ -16,6 +16,7 @@ This module:
 - Optionally registers the VM in Netbox (interfaces, IP addresses, disks)
 - Optionally creates forward DNS records (OPNSense Unbound or RFC2136)
 - Supports a `defaults` parameter to eliminate repetition across many VMs
+- Supports destroy protection to prevent accidental VM deletion
 
 ## Requirements
 
@@ -620,6 +621,70 @@ provider "dns" {
 }
 ```
 
+## Destroy protection
+
+The module supports protecting VMs from accidental deletion. When
+`prevent_destroy = true`, any plan that would destroy the VM is rejected —
+including `tofu destroy`, force-replacement due to configuration drift, and
+removal of the module block from configuration.
+
+### How it works
+
+OpenTofu does not allow variables in `lifecycle { prevent_destroy }`, so the
+module uses a guard resource (`terraform_data.destroy_protection`) with a
+static `prevent_destroy = true` and `count` controlled by the variable. The
+guard is linked to the VM via `triggers_replace`, so whenever the VM would be
+destroyed or replaced, the guard must also be destroyed — which is blocked by
+`prevent_destroy = true`, causing the plan to fail.
+
+### Enabling protection
+
+Per-VM:
+
+```hcl
+module "database" {
+  source          = "./modules/proxmox-vm"
+  prevent_destroy = true
+  # ...
+}
+```
+
+Or for all VMs via `defaults`:
+
+```hcl
+locals {
+  cluster_defaults = {
+    # ...
+    prevent_destroy = true
+  }
+}
+```
+
+A VM can opt out of cluster-wide protection by setting `prevent_destroy = false`
+explicitly.
+
+### Disabling protection
+
+Because the guard resource has a static `prevent_destroy = true`, changing
+the variable to `false` alone will fail — OpenTofu cannot destroy the guard.
+This is intentional: removing protection requires an explicit manual step.
+
+To disable protection for a VM:
+
+```bash
+# 1. Remove the guard resource from state
+tofu state rm 'module.database.terraform_data.destroy_protection[0]'
+
+# 2. Set prevent_destroy = false in code and apply
+tofu apply
+```
+
+For `for_each`-based modules, adjust the address accordingly:
+
+```bash
+tofu state rm 'module.vm["database"].terraform_data.destroy_protection[0]'
+```
+
 ## The `defaults` parameter
 
 The `defaults` object carries cluster-level or project-level settings. Every
@@ -656,6 +721,7 @@ Special behaviors:
 | `initialization_ipv4_gateway`        | `string`       | Default IPv4 gateway                             |
 | `initialization_user_data_file_id`   | `string`       | Cloud-init user data file ID                     |
 | `enable_netbox`                      | `bool`         | Whether to create Netbox resources               |
+| `prevent_destroy`                    | `bool`         | Prevent accidental VM deletion (see below)       |
 | `dns_provider`                       | `string`       | DNS backend: `opnsense`, `rfc2136`               |
 | `dns_zone`                           | `string`       | DNS zone with trailing dot (RFC2136)             |
 | `dns_ttl`                            | `number`       | DNS record TTL in seconds (RFC2136)              |
@@ -683,6 +749,7 @@ Special behaviors:
 | `initialization_ipv4_gateway`      | `string`                         | `null`   | no       | IPv4 gateway                                                  |
 | `initialization_user_data_file_id` | `string`                         | `null`   | no       | Cloud-init user data file ID                                  |
 | `enable_netbox`                    | `bool`                           | `null`   | no       | Create Netbox resources (fallback: `true`)                    |
+| `prevent_destroy`                  | `bool`                           | `null`   | no       | Prevent accidental VM deletion (fallback: `false`)           |
 | `provisioner_extra_commands`       | `list(string)`                   | `[]`     | no       | Additional shell commands run via remote-exec after creation  |
 | `skip_clone`                       | `bool`                           | `false`  | no       | Skip clone, cloud-init and provisioning (for ISO-installed VMs) |
 | `started`                          | `bool`                           | `true`   | no       | Start VM after creation (set `false` for ISO installs)       |
@@ -782,7 +849,8 @@ Always run `tofu plan` after migration to verify zero changes.
 ### Lifecycle
 
 The module ignores changes to `initialization[0].user_data_file_id` to prevent
-unnecessary updates after initial provisioning.
+unnecessary updates after initial provisioning. Optionally, the module can
+prevent VM destruction entirely — see [Destroy protection](#destroy-protection).
 
 The post-creation provisioner (hostname configuration via `remote-exec`) runs
 in a separate `terraform_data` resource. It is automatically skipped when
