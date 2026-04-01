@@ -2,11 +2,11 @@ terraform {
   required_providers {
     proxmox = {
       source  = "bpg/proxmox"
-      version = "~> 0.98.1"
+      version = "~> 0.100.0"
     }
     netbox = {
       source  = "e-breuninger/netbox"
-      version = "~> 5.1.0"
+      version = "~> 5.2.1"
     }
     opnsense = {
       source  = "browningluke/opnsense"
