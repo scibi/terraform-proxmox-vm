@@ -229,7 +229,7 @@ resource "netbox_interface" "iface" {
   virtual_machine_id = netbox_virtual_machine.vm[0].id
   name               = each.value.iface
   enabled            = each.value.network_device.enabled
-  mac_address        = each.value.mac_address
+  mac_address        = upper(each.value.mac_address)
   tags               = [data.netbox_tag.terraform[0].name]
   depends_on         = [netbox_virtual_machine.vm]
 }
