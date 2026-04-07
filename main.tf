@@ -193,9 +193,10 @@ resource "netbox_virtual_machine" "vm" {
   disk_size_mb = sum([for d in var.disks : coalesce(d.size, 0)]) * 1024
 
   vcpus = var.cpu_cores
-  local_context_data = jsonencode({
-    "vm_id" = proxmox_virtual_environment_vm.vm.id
-  })
+  local_context_data = jsonencode(merge(
+    { "vm_id" = proxmox_virtual_environment_vm.vm.id },
+    length(local.dns_cnames) > 0 ? { "dns_cnames" = local.dns_cnames } : {}
+  ))
   tags       = [data.netbox_tag.terraform[0].name]
   depends_on = [proxmox_virtual_environment_vm.vm]
 }
