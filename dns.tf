@@ -5,7 +5,7 @@ locals {
   dns_ip       = split("/", var.network_interfaces[0].ipv4_address)[0]
   dns_zone     = var.dns_zone != null ? var.dns_zone : try(var.defaults.dns_zone, "${local.dns_domain}.")
   dns_ttl      = var.dns_ttl != null ? var.dns_ttl : try(var.defaults.dns_ttl, 3600)
-  dns_cnames   = length(var.dns_cnames) > 0 ? var.dns_cnames : try(var.defaults.dns_cnames, [])
+  dns_cnames   = length(var.dns_cnames) > 0 ? var.dns_cnames : coalesce(try(var.defaults.dns_cnames, null), [])
 
   dns_cname_map = {
     for cname in local.dns_cnames : cname => {
