@@ -1,6 +1,15 @@
 output "vm" {
-  value       = proxmox_virtual_environment_vm.vm
-  description = "The Proxmox virtual machine resource"
+  value = {
+    id                      = proxmox_virtual_environment_vm.vm.id
+    vm_id                   = proxmox_virtual_environment_vm.vm.vm_id
+    name                    = proxmox_virtual_environment_vm.vm.name
+    node_name               = proxmox_virtual_environment_vm.vm.node_name
+    ipv4_addresses          = proxmox_virtual_environment_vm.vm.ipv4_addresses
+    ipv6_addresses          = proxmox_virtual_environment_vm.vm.ipv6_addresses
+    mac_addresses           = proxmox_virtual_environment_vm.vm.mac_addresses
+    network_interface_names = proxmox_virtual_environment_vm.vm.network_interface_names
+  }
+  description = "Selected attributes of the Proxmox VM resource"
 }
 output "netbox_vm" {
   value       = local.enable_netbox ? netbox_virtual_machine.vm[0] : null
