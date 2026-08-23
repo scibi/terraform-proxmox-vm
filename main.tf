@@ -6,7 +6,7 @@ terraform {
     }
     netbox = {
       source  = "e-breuninger/netbox"
-      version = "~> 5.2.1"
+      version = "~> 5.6"
     }
     opnsense = {
       source  = "browningluke/opnsense"
@@ -190,7 +190,9 @@ resource "netbox_virtual_machine" "vm" {
 
   name         = proxmox_virtual_environment_vm.vm.name
   memory_mb    = proxmox_virtual_environment_vm.vm.memory[0].dedicated
-  disk_size_mb = sum([for d in var.disks : coalesce(d.size, 0)]) * 1024
+  # NetBox ≥ 4.6 wymaga zgodności VM.disk z sumą virtual disks — używamy
+  # rozmiarów z Proxmox (jak w netbox_virtual_disk), nie z var.disks.
+  disk_size_mb = sum([for d in proxmox_virtual_environment_vm.vm.disk : coalesce(d.size, 0)]) * 1024
 
   vcpus = var.cpu_cores
   local_context_data = jsonencode(merge(
@@ -230,9 +232,28 @@ resource "netbox_interface" "iface" {
   virtual_machine_id = netbox_virtual_machine.vm[0].id
   name               = each.value.iface
   enabled            = each.value.network_device.enabled
-  mac_address        = upper(each.value.mac_address)
+  # MAC: NetBox ≥ 4.5 / provider ≥ 5.7 — osobny obiekt netbox_mac_address
+  # (pole mac_address na interfejsie jest tylko computed).
   tags               = [data.netbox_tag.terraform[0].name]
   depends_on         = [netbox_virtual_machine.vm]
+}
+
+resource "netbox_mac_address" "iface" {
+  for_each = local.enable_netbox ? {
+    for k, v in local.interfaces : k => v if v.mac_address != null && v.mac_address != ""
+  } : {}
+
+  mac_address                  = upper(each.value.mac_address)
+  virtual_machine_interface_id = netbox_interface.iface[each.key].id
+  description                  = "${var.vm_name} (${each.value.iface})"
+  tags                         = [data.netbox_tag.terraform[0].name]
+}
+
+resource "netbox_virtual_machine_interface_primary_mac_address" "iface" {
+  for_each = netbox_mac_address.iface
+
+  interface_id   = netbox_interface.iface[each.key].id
+  mac_address_id = each.value.id
 }
 
 resource "netbox_ip_address" "ipv4" {
