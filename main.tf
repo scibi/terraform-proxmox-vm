@@ -188,8 +188,8 @@ resource "netbox_virtual_machine" "vm" {
   cluster_id = data.netbox_cluster.cluster[0].id
   site_id    = data.netbox_cluster.cluster[0].site_id
 
-  name         = proxmox_virtual_environment_vm.vm.name
-  memory_mb    = proxmox_virtual_environment_vm.vm.memory[0].dedicated
+  name      = proxmox_virtual_environment_vm.vm.name
+  memory_mb = proxmox_virtual_environment_vm.vm.memory[0].dedicated
   # NetBox ≥ 4.6 wymaga zgodności VM.disk z sumą virtual disks — używamy
   # rozmiarów z Proxmox (jak w netbox_virtual_disk), nie z var.disks.
   disk_size_mb = sum([for d in proxmox_virtual_environment_vm.vm.disk : coalesce(d.size, 0)]) * 1024
@@ -234,8 +234,8 @@ resource "netbox_interface" "iface" {
   enabled            = each.value.network_device.enabled
   # MAC: NetBox ≥ 4.5 / provider ≥ 5.7 — osobny obiekt netbox_mac_address
   # (pole mac_address na interfejsie jest tylko computed).
-  tags               = [data.netbox_tag.terraform[0].name]
-  depends_on         = [netbox_virtual_machine.vm]
+  tags       = [data.netbox_tag.terraform[0].name]
+  depends_on = [netbox_virtual_machine.vm]
 }
 
 resource "netbox_mac_address" "iface" {
