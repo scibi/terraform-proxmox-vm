@@ -53,6 +53,7 @@ resource "proxmox_virtual_environment_vm" "vm" {
   node_name = local.node_name
   vm_id     = var.vm_id
   started   = var.started
+  on_boot   = var.start_on_boot
 
   memory {
     dedicated = var.memory_size
@@ -76,9 +77,9 @@ resource "proxmox_virtual_environment_vm" "vm" {
   }
 
   startup {
-    order      = "3"
-    up_delay   = "60"
-    down_delay = "60"
+    order      = var.startup_order
+    up_delay   = var.startup_up_delay
+    down_delay = var.startup_down_delay
   }
 
   dynamic "network_device" {

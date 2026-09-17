@@ -753,6 +753,10 @@ Special behaviors:
 | `provisioner_extra_commands`       | `list(string)`                   | `[]`     | no       | Additional shell commands run via remote-exec after creation  |
 | `skip_clone`                       | `bool`                           | `false`  | no       | Skip clone, cloud-init and provisioning (for ISO-installed VMs) |
 | `started`                          | `bool`                           | `true`   | no       | Start VM after creation (set `false` for ISO installs)       |
+| `start_on_boot`                    | `bool`                           | `true`   | no       | Start the VM when the Proxmox node boots (`on_boot`)         |
+| `startup_order`                    | `string`                         | `"3"`    | no       | Proxmox start/shutdown order (lower starts first)            |
+| `startup_up_delay`                 | `string`                         | `"60"`   | no       | Seconds to wait after starting this guest                    |
+| `startup_down_delay`               | `string`                         | `"60"`   | no       | Seconds to wait after shutting down this guest               |
 | `cdrom`                            | `object({file_id, interface?})`  | `null`   | no       | CD-ROM/ISO config (interface defaults to `ide2`)             |
 | `boot_order`                       | `list(string)`                   | `null`   | no       | Boot device order (e.g. `["scsi0", "ide2", "net0"]`)         |
 | `scsi_hardware`                    | `string`                         | `null`   | no       | SCSI controller type (e.g. `virtio-scsi-single`)             |

@@ -215,3 +215,27 @@ variable "dns_ttl" {
   default     = null
 }
 
+variable "start_on_boot" {
+  type        = bool
+  description = "Start the VM when the Proxmox node boots (provider on_boot)"
+  default     = true
+}
+
+variable "startup_order" {
+  type        = string
+  description = "Proxmox guest start/shutdown order (lower starts first, shuts down last)"
+  default     = "3"
+}
+
+variable "startup_up_delay" {
+  type        = string
+  description = "Seconds to wait after starting this guest before starting the next"
+  default     = "60"
+}
+
+variable "startup_down_delay" {
+  type        = string
+  description = "Seconds to wait after shutting down this guest before shutting down the next"
+  default     = "60"
+}
+
